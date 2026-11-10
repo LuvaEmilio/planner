@@ -1152,8 +1152,8 @@ function readSlots(ExcelJS, buf) {
     if (!c || !c.use) {
       dl = localDownloads(); col = LDB.collection(); col.onSnapshot(applySnapshot);
       setSync(Sync.on() ? 'ok' : 'local');
-      if (Sync.on()) { Sync.now(); setInterval(function () { if (!document.hidden) Sync.now(); }, 60000); }
-      document.addEventListener('visibilitychange', function () { if (!document.hidden && Sync.on()) Sync.now(); });
+      if (Sync.on()) Sync.now(); setInterval(function () { if (!document.hidden && Sync.on()) Sync.now(); }, 10000);
+      document.addEventListener('visibilitychange', function () { if (!document.hidden && Sync.on()) Sync.now(); }); window.addEventListener('focus', function () { if (Sync.on()) Sync.now(); });
       window.addEventListener('online', function () { if (Sync.on()) Sync.now(); });
       return;
     }
@@ -1535,7 +1535,7 @@ function readSlots(ExcelJS, buf) {
   })();
 
   var Sync = (function () {
-    var cfg = null, key = null, keySalt = null, sha = null, timer = null, busy = false, again = false, last = 0, state = 'off', msg = '';
+    var cfg = null, key = null, keySalt = null, sha = null, etag = null, localDirty = false, timer = null, busy = false, again = false, last = 0, state = 'off', msg = '';
     try { cfg = JSON.parse(localStorage.getItem(SYNCKEY) || 'null'); } catch (e) { cfg = null; }
     var PATH = 'planner-data.enc.json';
     function b64(u8) { var s = '', i, C = 0x8000; for (i = 0; i < u8.length; i += C) s += String.fromCharCode.apply(null, u8.subarray(i, i + C)); return btoa(s); }
@@ -1559,10 +1559,10 @@ function readSlots(ExcelJS, buf) {
       try { var pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(file.iv) }, k, unb64(file.ct)); return JSON.parse(new TextDecoder().decode(pt)); }
       catch (e) { var err = new Error('Het wachtwoord klopt niet met de gegevens op GitHub.'); err.code = 'pass'; throw err; }
     }
-    function api(method, body) {
+    function api(method, body, etagIn) {
       return fetch('https://api.github.com/repos/' + cfg.repo + '/contents/' + PATH, {
         method: method, cache: 'no-store',
-        headers: Object.assign({ 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, body ? { 'Content-Type': 'application/json' } : {}),
+        headers: Object.assign({ 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, body ? { 'Content-Type': 'application/json' } : {}, etagIn ? { 'If-None-Match': etagIn } : {}),
         body: body ? JSON.stringify(body) : undefined
       });
     }
@@ -1573,8 +1573,10 @@ function readSlots(ExcelJS, buf) {
       if (r.status === 404) e.message = 'De repo ' + cfg.repo + ' is niet gevonden, of het token heeft er geen toegang toe.';
       return e;
     }
-    async function pull() {
-      var r = await api('GET');
+    async function pull(cheap) {
+      var r = await api('GET', null, cheap && sha ? etag : null);
+      if (r.status === 304) return { same: true };
+      etag = r.headers.get('ETag') || null;
       if (r.status === 404) {
         var probe = await fetch('https://api.github.com/repos/' + cfg.repo, { headers: { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/vnd.github+json' }, cache: 'no-store' });
         if (!probe.ok) throw fail(probe);
@@ -1594,20 +1596,23 @@ function readSlots(ExcelJS, buf) {
       if (!r.ok) throw fail(r);
       var j = await r.json(); sha = j.content && j.content.sha;
     }
-    function set(st, m) { state = st; msg = m || ''; if (typeof updateSync === 'function') updateSync(); if (S.view === 'inst' && !S.sheet) render(); }
+    function set(st, m) { var same = st === state && (m || '') === msg; state = st; msg = m || ''; if (typeof updateSync === 'function') updateSync(); if (S.view === 'inst' && !S.sheet && (!same || st === 'ok')) render(); }
     async function cycle() {
       if (!cfg || !cfg.token || !cfg.repo || !cfg.pass) return;
       if (busy) { again = true; return; }
       if (!navigator.onLine) { set('offline', 'Geen internet. Wijzigingen staan op dit apparaat en gaan mee zodra je weer online bent.'); return; }
-      busy = true; set('busy');
+      busy = true; var wasDirty = localDirty; localDirty = false; if (wasDirty) set('busy');
       try {
         for (var attempt = 0; attempt < 3; attempt++) {
-          var rem = await pull(), m = LDB.merge(rem.docs);
+          var rem = await pull(attempt === 0 && !wasDirty), m;
+          if (rem.same) break;
+          m = LDB.merge(rem.docs);
           if (!m.newer && !rem.fresh) break;
           try { await push(rem.salt); break; } catch (e) { if (!e.conflict || attempt === 2) throw e; }
         }
         last = Date.now(); set('ok');
       } catch (e) {
+        localDirty = localDirty || wasDirty;
         set('bad', e && e.message ? e.message : 'Synchroniseren lukte niet.');
       } finally {
         busy = false;
@@ -1628,7 +1633,7 @@ function readSlots(ExcelJS, buf) {
         } catch (e) { cfg = prev; key = null; throw e; }
       },
       off: function () { cfg = null; key = null; sha = null; try { localStorage.removeItem(SYNCKEY); } catch (e) {} set('off'); },
-      dirty: function () { if (!cfg) return; clearTimeout(timer); timer = setTimeout(cycle, 1500); },
+      dirty: function () { if (!cfg) return; localDirty = true; clearTimeout(timer); timer = setTimeout(cycle, 400); },
       now: cycle
     };
   })();
