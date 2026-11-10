@@ -2430,15 +2430,22 @@ function readSlots(ExcelJS, buf) {
     return { rows: rows, week: head.week };
   }
   var ocrLib = null, ocrWorker = null;
-  function ocrBase() { return new URL('ocr/', location.href).href; }
+  var ocrDir = null;
+  function ocrBase() { return ocrDir || new URL('ocr/', location.href).href; }
+  function ocrFind() {
+    // bestanden staan in ocr/ of (bij uploaden zonder map) naast index.html
+    if (ocrDir) return Promise.resolve(ocrDir);
+    var sub = new URL('ocr/', location.href).href, root = new URL('./', location.href).href;
+    return fetch(sub + 'worker-wrap.js', { method: 'HEAD' }).then(function (r) { return r.ok ? sub : root; }, function () { return root; }).then(function (d) { ocrDir = d; return d; });
+  }
   function ocrLoad() {
     if (ocrWorker) return ocrWorker;
-    ocrLib = ocrLib || new Promise(function (res, rej) {
+    ocrLib = ocrLib || ocrFind().then(function () { return new Promise(function (res, rej) {
       if (window.Tesseract) return res(window.Tesseract);
       var sc = document.createElement('script'); sc.src = ocrBase() + 'tesseract.min.js';
       sc.onload = function () { res(window.Tesseract); }; sc.onerror = function () { ocrLib = null; rej(new Error('load')); };
       document.head.appendChild(sc);
-    });
+    }); });
     ocrWorker = ocrLib.then(function (T) {
       var b = ocrBase();
       return T.createWorker('nld', 1, { workerPath: b + 'worker-wrap.js', corePath: b, langPath: b.replace(/\/$/, ''), workerBlobURL: false, cacheMethod: 'none' });
@@ -2517,7 +2524,7 @@ function readSlots(ExcelJS, buf) {
       '<li>Maak een token: <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained token</a>. Kies bij <i>Repository access</i> alleen die repo en zet <i>Contents</i> op <i>Read and write</i>.</li>' +
       '<li>Vul hieronder de repo, het token en een eigen wachtwoord in. Doe dit op je laptop én op je iPhone, met hetzelfde wachtwoord.</li></ol>' +
       '<div class="group">' +
-      '<label class="cell" for="sR"><span class="lab">Repo</span><input id="sR" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" value="' + esc(s.repo) + '" placeholder="LuvaEmilio/planner-data" data-sin="repo"></label>' +
+      '<label class="cell" for="sR"><span class="lab">Repo</span><input id="sR" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" value="' + esc(s.repo) + '" placeholder="LuvaEmilio/Planner-data" data-sin="repo"></label>' +
       '<label class="cell" for="sT"><span class="lab">Token</span><input id="sT" type="password" autocomplete="off" value="' + esc(s.token) + '" placeholder="github_pat_…" data-sin="token"></label>' +
       '<label class="cell" for="sP"><span class="lab">Wachtwoord</span><input id="sP" type="password" autocomplete="new-password" value="' + esc(s.pass) + '" placeholder="Minstens 8 tekens" data-sin="pass"></label>' +
       '</div>' +
@@ -2527,7 +2534,7 @@ function readSlots(ExcelJS, buf) {
   }
   async function syncConnect(s) {
     if (s.busy) return;
-    if (!/^[\w.-]+\/[\w.-]+$/.test(String(s.repo || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, ''))) { s.err = 'Vul de repo in als gebruikersnaam/naam, bijvoorbeeld LuvaEmilio/planner-data.'; renderSheet(); return; }
+    if (!/^[\w.-]+\/[\w.-]+$/.test(String(s.repo || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, ''))) { s.err = 'Vul de repo in als gebruikersnaam/naam, bijvoorbeeld LuvaEmilio/Planner-data.'; renderSheet(); return; }
     if (String(s.token || '').trim().length < 20) { s.err = 'Plak het hele token. Het begint meestal met github_pat_.'; renderSheet(); return; }
     if (String(s.pass || '').length < 8) { s.err = 'Kies een wachtwoord van minstens 8 tekens.'; renderSheet(); return; }
     s.busy = true; s.err = ''; renderSheet();
